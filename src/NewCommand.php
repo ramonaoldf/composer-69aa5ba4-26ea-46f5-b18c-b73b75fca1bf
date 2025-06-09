@@ -37,6 +37,10 @@ class NewCommand extends Command
      */
     protected function execute(InputInterface $input, OutputInterface $output)
     {
+        if (! class_exists('ZipArchive')) {
+            throw new RuntimeException('The Zip PHP extension is not installed. Please install it and try again.');
+        }
+
         $this->verifyApplicationDoesntExist(
             $directory = getcwd().'/'.$input->getArgument('name'),
             $output
@@ -60,6 +64,8 @@ class NewCommand extends Command
         ];
 
         $process = new Process(implode(' && ', $commands), $directory, null, null, null);
+
+        $process->setTty(true);
 
         $process->run(function ($type, $line) use ($output) {
             $output->write($line);
@@ -154,7 +160,7 @@ class NewCommand extends Command
     /**
      * Get the version that should be downloaded.
      *
-     * @param  \Symfony\Component\Console\Input\InputInterface
+     * @param  \Symfony\Component\Console\Input\InputInterface  $input
      * @return string
      */
     protected function getVersion($input)
