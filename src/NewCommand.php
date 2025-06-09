@@ -93,7 +93,7 @@ class NewCommand extends Command
         }
 
         if (PHP_OS_FAMILY != 'Windows') {
-            $commands[] = "chmod 644 \"$directory/artisan\"";
+            $commands[] = "chmod 755 \"$directory/artisan\"";
         }
 
         if (($process = $this->runCommands($commands, $input, $output))->isSuccessful()) {
@@ -228,12 +228,20 @@ class NewCommand extends Command
     {
         if ($input->getOption('no-ansi')) {
             $commands = array_map(function ($value) {
+                if (substr($value, 0, 5) === 'chmod') {
+                    return $value;
+                }
+
                 return $value.' --no-ansi';
             }, $commands);
         }
 
         if ($input->getOption('quiet')) {
             $commands = array_map(function ($value) {
+                if (substr($value, 0, 5) === 'chmod') {
+                    return $value;
+                }
+
                 return $value.' --quiet';
             }, $commands);
         }
