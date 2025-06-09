@@ -51,9 +51,11 @@ class NewCommand extends Command
             ->addOption('react', null, InputOption::VALUE_NONE, 'Install the React Starter Kit')
             ->addOption('vue', null, InputOption::VALUE_NONE, 'Install the Vue Starter Kit')
             ->addOption('livewire', null, InputOption::VALUE_NONE, 'Install the Livewire Starter Kit')
+            ->addOption('livewire-class-components', null, InputOption::VALUE_NONE, 'Generate stand-alone Livewire class components')
             ->addOption('workos', null, InputOption::VALUE_NONE, 'Use WorkOS for authentication')
             ->addOption('pest', null, InputOption::VALUE_NONE, 'Install the Pest testing framework')
             ->addOption('phpunit', null, InputOption::VALUE_NONE, 'Install the PHPUnit testing framework')
+            ->addOption('npm', null, InputOption::VALUE_NONE, 'Install and build NPM dependencies')
             ->addOption('force', 'f', InputOption::VALUE_NONE, 'Forces install even if the directory already exists');
     }
 
@@ -136,6 +138,13 @@ class NewCommand extends Command
                     'workos' => $input->setOption('workos', true),
                     default => null,
                 };
+            }
+
+            if ($input->getOption('livewire') && ! $input->getOption('workos')) {
+                $input->setOption('livewire-class-components', ! confirm(
+                    label: 'Would you like to use Laravel Volt?',
+                    default: true,
+                ));
             }
         }
 
@@ -227,6 +236,10 @@ class NewCommand extends Command
         if ($stackSlug) {
             $createProjectCommand = $composer." create-project laravel/$stackSlug-starter-kit \"$directory\" --stability=dev";
 
+            if ($input->getOption('livewire-class-components')) {
+                $createProjectCommand = str_replace(" laravel/{$stackSlug}-starter-kit ", " laravel/{$stackSlug}-starter-kit:dev-components ", $createProjectCommand);
+            }
+
             if ($input->getOption('workos')) {
                 $createProjectCommand = str_replace(" laravel/{$stackSlug}-starter-kit ", " laravel/{$stackSlug}-starter-kit:dev-workos ", $createProjectCommand);
             }
@@ -297,9 +310,13 @@ class NewCommand extends Command
                 $output->writeln('');
             }
 
-            $runNpm = confirm(
-                label: 'Would you like to run <options=bold>npm install</> and <options=bold>npm run build</>?'
-            );
+            $runNpm = $input->getOption('npm');
+
+            if (! $input->getOption('npm') && $input->isInteractive()) {
+                $runNpm = confirm(
+                    label: 'Would you like to run <options=bold>npm install</> and <options=bold>npm run build</>?'
+                );
+            }
 
             if ($runNpm) {
                 $this->runCommands(['npm install', 'npm run build'], $input, $output, workingPath: $directory);
