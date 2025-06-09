@@ -69,10 +69,6 @@ class NewCommand extends Command
 
         sleep(1);
 
-        if (version_compare(PHP_VERSION, '7.3.0', '<')) {
-            throw new RuntimeException('The Laravel installer requires PHP 7.3.0 or greater. Please use "composer create-project laravel/laravel" instead.');
-        }
-
         $name = $input->getArgument('name');
 
         $directory = $name && $name !== '.' ? getcwd().'/'.$name : '.';
@@ -86,26 +82,35 @@ class NewCommand extends Command
         $composer = $this->findComposer();
 
         $commands = [
-            $composer." create-project laravel/laravel $directory $version --remove-vcs --prefer-dist",
-            "chmod 644 $directory/artisan",
+            $composer." create-project laravel/laravel \"$directory\" $version --remove-vcs --prefer-dist",
         ];
 
-        if ($directory != '.') {
-            array_unshift($commands, "rm -rf $directory");
+        if ($directory != '.' && $input->getOption('force')) {
+            if (PHP_OS_FAMILY == 'Windows') {
+                array_unshift($commands, "rd /s /q \"$directory\"");
+            } else {
+                array_unshift($commands, "rm -rf $directory");
+            }
+        }
+
+        if (PHP_OS_FAMILY != 'Windows') {
+            $commands[] = "chmod 644 $directory/artisan";
         }
 
         if ($this->runCommands($commands, $input, $output)->isSuccessful()) {
-            $this->replaceInFile(
-                'APP_URL=http://localhost',
-                'APP_URL=http://'.$name.'.test',
-                $directory.'/.env'
-            );
+            if ($name && $name !== '.') {
+                $this->replaceInFile(
+                    'APP_URL=http://localhost',
+                    'APP_URL=http://'.$name.'.test',
+                    $directory.'/.env'
+                );
 
-            $this->replaceInFile(
-                'DB_DATABASE=laravel',
-                'DB_DATABASE='.str_replace('-', '_', strtolower($name)),
-                $directory.'/.env'
-            );
+                $this->replaceInFile(
+                    'DB_DATABASE=laravel',
+                    'DB_DATABASE='.str_replace('-', '_', strtolower($name)),
+                    $directory.'/.env'
+                );
+            }
 
             if ($input->getOption('jet')) {
                 $this->installJetstream($directory, $stack, $teams, $input, $output);
