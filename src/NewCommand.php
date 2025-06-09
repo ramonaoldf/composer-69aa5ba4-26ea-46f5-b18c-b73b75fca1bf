@@ -5,6 +5,7 @@ namespace Laravel\Installer\Console;
 use Illuminate\Filesystem\Filesystem;
 use Illuminate\Support\Composer;
 use Illuminate\Support\ProcessUtils;
+use Illuminate\Support\Str;
 use RuntimeException;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputArgument;
@@ -292,6 +293,10 @@ class NewCommand extends Command
 
             $this->configureComposerDevScript($directory);
 
+            if ($input->getOption('pest')) {
+                $output->writeln('');
+            }
+
             $runNpm = confirm(
                 label: 'Would you like to run <options=bold>npm install</> and <options=bold>npm run build</>?'
             );
@@ -572,6 +577,7 @@ class NewCommand extends Command
         if ($input->getOption('react') || $input->getOption('vue') || $input->getOption('livewire')) {
             $commands[] = $composerBinary.' require pestphp/pest-plugin-drift --dev';
             $commands[] = $this->phpBinary().' ./vendor/bin/pest --drift';
+            $commands[] = $composerBinary.' remove pestphp/pest-plugin-drift --dev';
         }
 
         $this->runCommands($commands, $input, $output, workingPath: $directory, env: [
@@ -587,6 +593,14 @@ class NewCommand extends Command
             'pest/Unit.php',
             $directory.'/tests/Unit/ExampleTest.php',
         );
+
+        if ($input->getOption('react') || $input->getOption('vue') || $input->getOption('livewire')) {
+            $this->replaceInFile(
+                './vendor/bin/phpunit',
+                './vendor/bin/pest',
+                $directory.'/.github/workflows/tests.yml',
+            );
+        }
 
         if (($input->getOption('react') || $input->getOption('vue') || $input->getOption('livewire')) && $input->getOption('phpunit')) {
             $this->deleteFile($directory.'/tests/Pest.php');
@@ -814,11 +828,7 @@ class NewCommand extends Command
     {
         if (! $output->isDecorated()) {
             $commands = array_map(function ($value) {
-                if (str_starts_with($value, 'chmod')) {
-                    return $value;
-                }
-
-                if (str_starts_with($value, 'git')) {
+                if (Str::startsWith($value, ['chmod', 'git', $this->phpBinary().' ./vendor/bin/pest'])) {
                     return $value;
                 }
 
@@ -828,11 +838,7 @@ class NewCommand extends Command
 
         if ($input->getOption('quiet')) {
             $commands = array_map(function ($value) {
-                if (str_starts_with($value, 'chmod')) {
-                    return $value;
-                }
-
-                if (str_starts_with($value, 'git')) {
+                if (Str::startsWith($value, ['chmod', 'git', $this->phpBinary().' ./vendor/bin/pest'])) {
                     return $value;
                 }
 
