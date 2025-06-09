@@ -158,9 +158,12 @@ class NewCommand extends Command
         }
 
         $composer = $this->findComposer();
+        $phpBinary = $this->phpBinary();
 
         $commands = [
-            $composer." create-project laravel/laravel \"$directory\" $version --remove-vcs --prefer-dist",
+            $composer." create-project laravel/laravel \"$directory\" $version --remove-vcs --prefer-dist --no-scripts",
+            $composer." run post-root-package-install -d \"$directory\"",
+            $phpBinary." \"$directory/artisan\" key:generate --ansi",
         ];
 
         if ($directory != '.' && $input->getOption('force')) {
@@ -464,12 +467,12 @@ class NewCommand extends Command
                 default: $defaultDatabase,
             ));
 
-            if ($input->getOption('database') !== 'sqlite') {
-                $migrate = confirm(
-                    label: 'Default database updated. Would you like to run the default database migrations?',
-                    default: true
-                );
-            }
+            $migrate = confirm(
+                label: $input->getOption('database') !== 'sqlite'
+                    ? 'Default database updated. Would you like to run the default database migrations?'
+                    : 'Would you like to run the default database migrations?',
+                default: true
+            );
         }
 
         return [$input->getOption('database') ?? $defaultDatabase, $migrate ?? false];
@@ -758,7 +761,7 @@ class NewCommand extends Command
     protected function getTld()
     {
         foreach (['herd', 'valet'] as $tool) {
-            $process = new Process([$tool, 'tld']);
+            $process = new Process([$tool, 'tld', '-v']);
 
             $process->run();
 
@@ -790,7 +793,7 @@ class NewCommand extends Command
     protected function isParked(string $directory)
     {
         foreach (['herd', 'valet'] as $tool) {
-            $process = new Process([$tool, 'paths']);
+            $process = new Process([$tool, 'paths', '-v']);
 
             $process->run();
 
