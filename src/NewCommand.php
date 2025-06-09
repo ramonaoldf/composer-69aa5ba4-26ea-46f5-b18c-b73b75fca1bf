@@ -11,7 +11,6 @@ use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
-use Symfony\Component\Process\Exception\ProcessStartFailedException;
 use Symfony\Component\Process\PhpExecutableFinder;
 use Symfony\Component\Process\Process;
 
@@ -23,6 +22,7 @@ use function Laravel\Prompts\text;
 class NewCommand extends Command
 {
     use Concerns\ConfiguresPrompts;
+    use Concerns\InteractsWithHerdOrValet;
 
     /**
      * The Composer instance.
@@ -159,7 +159,7 @@ class NewCommand extends Command
         $this->validateDatabaseOption($input);
         $this->validateStackOption($input);
 
-        $name = $input->getArgument('name');
+        $name = mb_rtrim($input->getArgument('name'), '/\\');
 
         $directory = $this->getInstallationDirectory($name);
 
@@ -247,7 +247,7 @@ class NewCommand extends Command
             $output->writeln('<fg=gray>➜</> <options=bold>cd '.$name.'</>');
             $output->writeln('<fg=gray>➜</> <options=bold>npm install && npm run build</>');
 
-            if ($this->isParked($directory)) {
+            if ($this->isParkedOnHerdOrValet($directory)) {
                 $url = $this->generateAppUrl($name);
                 $output->writeln('<fg=gray>➜</> Open: <options=bold;href='.$url.'>'.$url.'</>');
             } else {
@@ -770,7 +770,10 @@ class NewCommand extends Command
     {
         $this->composer->modify(function (array $content) {
             if (windows_os()) {
-                $content['scripts']['dev'] = "npx concurrently -c \"#93c5fd,#c4b5fd,#fdba74\" \"php artisan serve\" \"php artisan queue:listen --tries=1\" \"npm run dev\" --names='server,queue,vite'";
+                $content['scripts']['dev'] = [
+                    'Composer\\Config::disableProcessTimeout',
+                    "npx concurrently -c \"#93c5fd,#c4b5fd,#fdba74\" \"php artisan serve\" \"php artisan queue:listen --tries=1\" \"npm run dev\" --names='server,queue,vite'",
+                ];
             }
 
             return $content;
@@ -810,7 +813,7 @@ class NewCommand extends Command
      */
     protected function getTld()
     {
-        return $this->runOnValetOrHerd('tld') ?? 'test';
+        return $this->runOnValetOrHerd('tld') ?: 'test';
     }
 
     /**
@@ -822,19 +825,6 @@ class NewCommand extends Command
     protected function canResolveHostname($hostname)
     {
         return gethostbyname($hostname.'.') !== $hostname.'.';
-    }
-
-    /**
-     * Determine if the given directory is parked using Herd or Valet.
-     *
-     * @param  string  $directory
-     * @return bool
-     */
-    protected function isParked(string $directory)
-    {
-        $output = $this->runOnValetOrHerd('paths');
-
-        return $output !== false ? in_array(dirname($directory), json_decode($output)) : false;
     }
 
     /**
@@ -887,30 +877,6 @@ class NewCommand extends Command
         return $phpBinary !== false
             ? ProcessUtils::escapeArgument($phpBinary)
             : 'php';
-    }
-
-    /**
-     * Runs the given command on the "herd" or "valet" CLI.
-     *
-     * @param  string  $command
-     * @return string|bool
-     */
-    protected function runOnValetOrHerd(string $command)
-    {
-        foreach (['herd', 'valet'] as $tool) {
-            $process = new Process([$tool, $command, '-v']);
-
-            try {
-                $process->run();
-
-                if ($process->isSuccessful()) {
-                    return trim($process->getOutput());
-                }
-            } catch (ProcessStartFailedException) {
-            }
-        }
-
-        return false;
     }
 
     /**
