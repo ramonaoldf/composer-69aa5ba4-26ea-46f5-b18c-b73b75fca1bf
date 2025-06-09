@@ -25,15 +25,14 @@ class NewCommand extends Command
             ->setName('new')
             ->setDescription('Create a new Laravel application.')
             ->addArgument('name', InputArgument::OPTIONAL)
-            ->addOption('dev', null, InputOption::VALUE_NONE, 'Installs the latest "development" release')
-            ->addOption('5.2', null, InputOption::VALUE_NONE, 'Installs the "5.2" release');
+            ->addOption('dev', null, InputOption::VALUE_NONE, 'Installs the latest "development" release');
     }
 
     /**
      * Execute the command.
      *
-     * @param  InputInterface  $input
-     * @param  OutputInterface  $output
+     * @param  \Symfony\Component\Console\Input\InputInterface  $input
+     * @param  \Symfony\Component\Console\Output\OutputInterface  $output
      * @return void
      */
     protected function execute(InputInterface $input, OutputInterface $output)
@@ -43,8 +42,7 @@ class NewCommand extends Command
         }
 
         $this->verifyApplicationDoesntExist(
-            $directory = ($input->getArgument('name')) ? getcwd().'/'.$input->getArgument('name') : getcwd(),
-            $output
+            $directory = ($input->getArgument('name')) ? getcwd().'/'.$input->getArgument('name') : getcwd()
         );
 
         $output->writeln('<info>Crafting application...</info>');
@@ -89,7 +87,7 @@ class NewCommand extends Command
      * @param  string  $directory
      * @return void
      */
-    protected function verifyApplicationDoesntExist($directory, OutputInterface $output)
+    protected function verifyApplicationDoesntExist($directory)
     {
         if ((is_dir($directory) || is_file($directory)) && $directory != getcwd()) {
             throw new RuntimeException('Application already exists!');
@@ -122,9 +120,6 @@ class NewCommand extends Command
             case 'master':
                 $filename = 'latest.zip';
                 break;
-            case '5.2':
-                $filename = 'latest-52.zip';
-                break;
         }
 
         $response = (new Client)->get('http://cabinet.laravel.com/'.$filename);
@@ -135,7 +130,7 @@ class NewCommand extends Command
     }
 
     /**
-     * Extract the zip file into the given directory.
+     * Extract the Zip file into the given directory.
      *
      * @param  string  $zipFile
      * @param  string  $directory
@@ -175,14 +170,10 @@ class NewCommand extends Command
      * @param  \Symfony\Component\Console\Input\InputInterface  $input
      * @return string
      */
-    protected function getVersion($input)
+    protected function getVersion(InputInterface $input)
     {
         if ($input->getOption('dev')) {
             return 'develop';
-        }
-
-        if ($input->getOption('5.2')) {
-            return '5.2';
         }
 
         return 'master';
