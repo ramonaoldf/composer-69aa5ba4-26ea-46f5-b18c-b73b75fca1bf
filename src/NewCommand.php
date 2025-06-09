@@ -24,7 +24,7 @@ class NewCommand extends Command
         $this
             ->setName('new')
             ->setDescription('Create a new Laravel application.')
-            ->addArgument('name', InputArgument::REQUIRED)
+            ->addArgument('name', InputArgument::OPTIONAL)
             ->addOption('dev', null, InputOption::VALUE_NONE, 'Installs the latest "development" release');
     }
 
@@ -42,7 +42,7 @@ class NewCommand extends Command
         }
 
         $this->verifyApplicationDoesntExist(
-            $directory = getcwd().'/'.$input->getArgument('name'),
+            $directory = ($input->getArgument('name')) ? getcwd().'/'.$input->getArgument('name') : getcwd(),
             $output
         );
 
@@ -65,7 +65,9 @@ class NewCommand extends Command
 
         $process = new Process(implode(' && ', $commands), $directory, null, null, null);
 
-        $process->setTty(true);
+        if ('\\' !== DIRECTORY_SEPARATOR && file_exists('/dev/tty') && is_readable('/dev/tty')) {
+            $process->setTty(true);
+        }
 
         $process->run(function ($type, $line) use ($output) {
             $output->write($line);
@@ -82,7 +84,7 @@ class NewCommand extends Command
      */
     protected function verifyApplicationDoesntExist($directory, OutputInterface $output)
     {
-        if (is_dir($directory)) {
+        if ((is_dir($directory) || is_file($directory)) && $directory != getcwd()) {
             throw new RuntimeException('Application already exists!');
         }
     }
