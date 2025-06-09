@@ -27,6 +27,7 @@ class NewCommand extends Command
             ->addArgument('name', InputArgument::REQUIRED)
             ->addOption('dev', null, InputOption::VALUE_NONE, 'Installs the latest "development" release')
             ->addOption('git', null, InputOption::VALUE_NONE, 'Initialize a Git repository')
+            ->addOption('branch', null, InputOption::VALUE_REQUIRED, 'The branch that should be created for a new repository', 'main')
             ->addOption('github', null, InputOption::VALUE_OPTIONAL, 'Create a new repository on GitHub', false)
             ->addOption('organization', null, InputOption::VALUE_REQUIRED, 'The GitHub organization to create the new repository for')
             ->addOption('jet', null, InputOption::VALUE_NONE, 'Installs the Laravel Jetstream scaffolding')
@@ -207,8 +208,10 @@ class NewCommand extends Command
     {
         chdir($directory);
 
+        $branch = $input->getOption('branch') ?: 'main';
+
         $commands = [
-            'git init -q -b main .',
+            "git init -q -b {$branch} .",
             'git add .',
             'git commit -q -m "Set up a fresh Laravel app"',
         ];
@@ -264,15 +267,15 @@ class NewCommand extends Command
         chdir($directory);
 
         $name = $input->getOption('organization') ? $input->getOption('organization')."/$name" : $name;
-
         $flags = $input->getOption('github') ?: '--private';
+        $branch = $input->getOption('branch') ?: 'main';
 
         $commands = [
-            "gh repo create $name -y $flags",
-            'git push -q -u origin main',
+            "gh repo create {$name} -y {$flags}",
+            "git -c credential.helper= -c credential.helper='!gh auth git-credential' push -q -u origin {$branch}",
         ];
 
-        $this->runCommands($commands, $input, $output);
+        $this->runCommands($commands, $input, $output, ['GIT_TERMINAL_PROMPT' => 0]);
     }
 
     /**
@@ -325,9 +328,10 @@ class NewCommand extends Command
      * @param  array  $commands
      * @param  \Symfony\Component\Console\Input\InputInterface  $input
      * @param  \Symfony\Component\Console\Output\OutputInterface  $output
+     * @param  array  $env
      * @return \Symfony\Component\Process\Process
      */
-    protected function runCommands($commands, InputInterface $input, OutputInterface $output)
+    protected function runCommands($commands, InputInterface $input, OutputInterface $output, array $env = [])
     {
         if ($input->getOption('no-ansi')) {
             $commands = array_map(function ($value) {
@@ -349,7 +353,7 @@ class NewCommand extends Command
             }, $commands);
         }
 
-        $process = Process::fromShellCommandline(implode(' && ', $commands), null, null, null, null);
+        $process = Process::fromShellCommandline(implode(' && ', $commands), null, $env, null, null);
 
         if ('\\' !== DIRECTORY_SEPARATOR && file_exists('/dev/tty') && is_readable('/dev/tty')) {
             try {
