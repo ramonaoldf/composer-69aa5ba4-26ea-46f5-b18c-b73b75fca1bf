@@ -2,17 +2,15 @@
 
 namespace Laravel\Installer\Console;
 
-use GuzzleHttp\Client;
 use RuntimeException;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
-use Symfony\Component\Filesystem\Exception\IOExceptionInterface;
-use Symfony\Component\Filesystem\Filesystem;
+use Symfony\Component\Console\Question\ChoiceQuestion;
+use Symfony\Component\Console\Style\SymfonyStyle;
 use Symfony\Component\Process\Process;
-use ZipArchive;
 
 class NewCommand extends Command
 {
@@ -28,7 +26,7 @@ class NewCommand extends Command
             ->setDescription('Create a new Laravel application')
             ->addArgument('name', InputArgument::OPTIONAL)
             ->addOption('dev', null, InputOption::VALUE_NONE, 'Installs the latest "development" release')
-            ->addOption('auth', null, InputOption::VALUE_NONE, 'Installs the Laravel authentication scaffolding')
+            ->addOption('jet', null, InputOption::VALUE_NONE, 'Installs the Laravel Jetstream scaffolding')
             ->addOption('force', 'f', InputOption::VALUE_NONE, 'Forces install even if the directory already exists');
     }
 
@@ -41,69 +39,106 @@ class NewCommand extends Command
      */
     protected function execute(InputInterface $input, OutputInterface $output)
     {
+        if ($input->getOption('jet')) {
+            $output->write(PHP_EOL."<fg=magenta>
+    |     |         |
+    |,---.|--- ,---.|--- ,---.,---.,---.,-.-.
+    ||---'|    `---.|    |    |---',---|| | |
+`---'`---'`---'`---'`---'`    `---'`---^` ' '</>".PHP_EOL.PHP_EOL);
+
+            $helper = $this->getHelper('question');
+
+            $question = new ChoiceQuestion('Which Jetstream stack do you prefer?', [
+                'livewire',
+                'inertia',
+            ]);
+
+            $output->write(PHP_EOL);
+
+            $stack = $helper->ask($input, new SymfonyStyle($input, $output), $question);
+
+            $teams = (new SymfonyStyle($input, $output))->confirm('Will your application use teams?', false);
+        } else {
+            $output->write(PHP_EOL.'<fg=red> _                               _
+| |                             | |
+| |     __ _ _ __ __ ___   _____| |
+| |    / _` | \'__/ _` \ \ / / _ \ |
+| |___| (_| | | | (_| |\ V /  __/ |
+|______\__,_|_|  \__,_| \_/ \___|_|'.PHP_EOL.PHP_EOL);
+        }
+
+        sleep(1);
+
         if (version_compare(PHP_VERSION, '7.3.0', '<')) {
             throw new RuntimeException('The Laravel installer requires PHP 7.3.0 or greater. Please use "composer create-project laravel/laravel" instead.');
         }
 
-        if (! extension_loaded('zip')) {
-            throw new RuntimeException('The Zip PHP extension is not installed. Please install it and try again.');
-        }
-
         $name = $input->getArgument('name');
 
-        $directory = $name && $name !== '.' ? getcwd().'/'.$name : getcwd();
+        $directory = $name && $name !== '.' ? getcwd().'/'.$name : '.';
+
+        $version = $this->getVersion($input);
 
         if (! $input->getOption('force')) {
             $this->verifyApplicationDoesntExist($directory);
         }
 
-        $output->writeln('<info>Crafting application...</info>');
-
-        $this->download($zipFile = $this->makeFilename(), $this->getVersion($input))
-             ->extract($zipFile, $directory)
-             ->prepareWritableDirectories($directory, $output)
-             ->cleanUp($zipFile);
-
         $composer = $this->findComposer();
 
         $commands = [
-            $composer.' install --no-scripts',
-            $composer.' run-script post-root-package-install',
-            $composer.' run-script post-create-project-cmd',
-            $composer.' run-script post-autoload-dump',
+            $composer." create-project laravel/laravel $directory $version --remove-vcs --prefer-dist",
+            "chmod 644 $directory/artisan",
         ];
 
-        if ($input->getOption('no-ansi')) {
-            $commands = array_map(function ($value) {
-                return $value.' --no-ansi';
-            }, $commands);
+        if ($directory != '.') {
+            array_unshift($commands, "rm -rf $directory");
         }
 
-        if ($input->getOption('quiet')) {
-            $commands = array_map(function ($value) {
-                return $value.' --quiet';
-            }, $commands);
-        }
+        if ($this->runCommands($commands, $input, $output)->isSuccessful()) {
+            $this->replaceInFile(
+                'APP_URL=http://localhost',
+                'APP_URL=http://'.$name.'.test',
+                $directory.'/.env'
+            );
 
-        $process = Process::fromShellCommandline(implode(' && ', $commands), $directory, null, null, null);
+            $this->replaceInFile(
+                'DB_DATABASE=laravel',
+                'DB_DATABASE='.str_replace('-', '_', strtolower($name)),
+                $directory.'/.env'
+            );
 
-        if ('\\' !== DIRECTORY_SEPARATOR && file_exists('/dev/tty') && is_readable('/dev/tty')) {
-            try {
-                $process->setTty(true);
-            } catch (RuntimeException $e) {
-                $output->writeln('Warning: '.$e->getMessage());
+            if ($input->getOption('jet')) {
+                $this->installJetstream($directory, $stack, $teams, $input, $output);
             }
-        }
 
-        $process->run(function ($type, $line) use ($output) {
-            $output->write($line);
-        });
-
-        if ($process->isSuccessful()) {
-            $output->writeln('<comment>Application ready! Build something amazing.</comment>');
+            $output->writeln(PHP_EOL.'<comment>Application ready! Build something amazing.</comment>');
         }
 
         return 0;
+    }
+
+    /**
+     * Install Laravel Jetstream into the application.
+     *
+     * @param  string  $directory
+     * @param  string  $stack
+     * @param  bool  $teams
+     * @param  \Symfony\Component\Console\Input\InputInterface  $input
+     * @param  \Symfony\Component\Console\Output\OutputInterface  $output
+     * @return void
+     */
+    protected function installJetstream(string $directory, string $stack, bool $teams, InputInterface $input, OutputInterface $output)
+    {
+        chdir($directory);
+
+        $commands = array_filter([
+            $this->findComposer().' require laravel/jetstream',
+            trim(sprintf(PHP_BINARY.' artisan jetstream:install %s %s', $stack, $teams ? '--teams' : '')),
+            $stack === 'inertia' ? 'npm install && npm run dev' : null,
+            PHP_BINARY.' artisan storage:link',
+        ]);
+
+        $this->runCommands($commands, $input, $output);
     }
 
     /**
@@ -120,104 +155,6 @@ class NewCommand extends Command
     }
 
     /**
-     * Generate a random temporary filename.
-     *
-     * @return string
-     */
-    protected function makeFilename()
-    {
-        return getcwd().'/laravel_'.md5(time().uniqid()).'.zip';
-    }
-
-    /**
-     * Download the temporary Zip to the given file.
-     *
-     * @param  string  $zipFile
-     * @param  string  $version
-     * @return $this
-     */
-    protected function download($zipFile, $version = 'master')
-    {
-        switch ($version) {
-            case 'develop':
-                $filename = 'latest-develop.zip';
-                break;
-            case 'auth':
-                $filename = 'latest-auth.zip';
-                break;
-            case 'master':
-                $filename = 'latest.zip';
-                break;
-        }
-
-        $response = (new Client)->get('http://cabinet.laravel.com/'.$filename);
-
-        file_put_contents($zipFile, $response->getBody());
-
-        return $this;
-    }
-
-    /**
-     * Extract the Zip file into the given directory.
-     *
-     * @param  string  $zipFile
-     * @param  string  $directory
-     * @return $this
-     */
-    protected function extract($zipFile, $directory)
-    {
-        $archive = new ZipArchive;
-
-        $response = $archive->open($zipFile, ZipArchive::CHECKCONS);
-
-        if ($response === ZipArchive::ER_NOZIP) {
-            throw new RuntimeException('The zip file could not download. Verify that you are able to access: http://cabinet.laravel.com/latest.zip');
-        }
-
-        $archive->extractTo($directory);
-
-        $archive->close();
-
-        return $this;
-    }
-
-    /**
-     * Clean-up the Zip file.
-     *
-     * @param  string  $zipFile
-     * @return $this
-     */
-    protected function cleanUp($zipFile)
-    {
-        @chmod($zipFile, 0777);
-
-        @unlink($zipFile);
-
-        return $this;
-    }
-
-    /**
-     * Make sure the storage and bootstrap cache directories are writable.
-     *
-     * @param  string  $appDirectory
-     * @param  \Symfony\Component\Console\Output\OutputInterface  $output
-     * @return $this
-     */
-    protected function prepareWritableDirectories($appDirectory, OutputInterface $output)
-    {
-        $filesystem = new Filesystem;
-
-        try {
-            $filesystem->chmod($appDirectory.DIRECTORY_SEPARATOR.'bootstrap/cache', 0755, 0000, true);
-            $filesystem->chmod($appDirectory.DIRECTORY_SEPARATOR.'storage', 0755, 0000, true);
-        } catch (IOExceptionInterface $e) {
-            $output->writeln('<comment>You should verify that the "storage" and "bootstrap/cache" directories are writable.</comment>');
-        }
-
-        return $this;
-    }
-
-    /**
      * Get the version that should be downloaded.
      *
      * @param  \Symfony\Component\Console\Input\InputInterface  $input
@@ -226,14 +163,10 @@ class NewCommand extends Command
     protected function getVersion(InputInterface $input)
     {
         if ($input->getOption('dev')) {
-            return 'develop';
+            return 'dev-develop';
         }
 
-        if ($input->getOption('auth')) {
-            return 'auth';
-        }
-
-        return 'master';
+        return '';
     }
 
     /**
@@ -250,5 +183,60 @@ class NewCommand extends Command
         }
 
         return 'composer';
+    }
+
+    /**
+     * Run the given commands.
+     *
+     * @param  array  $commands
+     * @param  \Symfony\Component\Console\Input\InputInterface  $input
+     * @param  \Symfony\Component\Console\Output\OutputInterface  $output
+     * @return Process
+     */
+    protected function runCommands($commands, InputInterface $input, OutputInterface $output)
+    {
+        if ($input->getOption('no-ansi')) {
+            $commands = array_map(function ($value) {
+                return $value.' --no-ansi';
+            }, $commands);
+        }
+
+        if ($input->getOption('quiet')) {
+            $commands = array_map(function ($value) {
+                return $value.' --quiet';
+            }, $commands);
+        }
+
+        $process = Process::fromShellCommandline(implode(' && ', $commands), null, null, null, null);
+
+        if ('\\' !== DIRECTORY_SEPARATOR && file_exists('/dev/tty') && is_readable('/dev/tty')) {
+            try {
+                $process->setTty(true);
+            } catch (RuntimeException $e) {
+                $output->writeln('Warning: '.$e->getMessage());
+            }
+        }
+
+        $process->run(function ($type, $line) use ($output) {
+            $output->write('    '.$line);
+        });
+
+        return $process;
+    }
+
+    /**
+     * Replace the given string in the given file.
+     *
+     * @param  string  $search
+     * @param  string  $replace
+     * @param  string  $file
+     * @return string
+     */
+    protected function replaceInFile(string $search, string $replace, string $file)
+    {
+        file_put_contents(
+            $file,
+            str_replace($search, $replace, file_get_contents($file))
+        );
     }
 }
