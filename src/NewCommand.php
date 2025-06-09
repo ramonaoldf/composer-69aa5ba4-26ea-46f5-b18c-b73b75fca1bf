@@ -241,6 +241,8 @@ class NewCommand extends Command
                 $output->writeln('');
             }
 
+            $this->configureComposerDevScript($directory);
+
             $output->writeln("  <bg=blue;fg=white> INFO </> Application ready in <options=bold>[{$name}]</>. You can start your local development using:".PHP_EOL);
             $output->writeln('<fg=gray>➜</> <options=bold>cd '.$name.'</>');
             $output->writeln('<fg=gray>➜</> <options=bold>npm install && npm run build</>');
@@ -759,6 +761,23 @@ class NewCommand extends Command
     }
 
     /**
+     * Configure the Composer "dev" script.
+     *
+     * @param  string  $directory
+     * @return void
+     */
+    protected function configureComposerDevScript(string $directory): void
+    {
+        $this->composer->modify(function (array $content) {
+            if (windows_os()) {
+                $content['scripts']['dev'] = "npx concurrently -c \"#93c5fd,#c4b5fd,#fdba74\" \"php artisan serve\" \"php artisan queue:listen --tries=1\" \"npm run dev\" --names='server,queue,vite'";
+            }
+
+            return $content;
+        });
+    }
+
+    /**
      * Verify that the application does not already exist.
      *
      * @param  string  $directory
@@ -904,7 +923,7 @@ class NewCommand extends Command
      * @param  array  $env
      * @return \Symfony\Component\Process\Process
      */
-    protected function runCommands($commands, InputInterface $input, OutputInterface $output, string $workingPath = null, array $env = [])
+    protected function runCommands($commands, InputInterface $input, OutputInterface $output, ?string $workingPath = null, array $env = [])
     {
         if (! $output->isDecorated()) {
             $commands = array_map(function ($value) {
