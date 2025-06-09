@@ -181,9 +181,15 @@ class NewCommand extends Command
                     $directory.'/.env'
                 );
 
-                $database = $this->promptForDatabaseOptions($input);
+                [$database, $migrate] = $this->promptForDatabaseOptions($directory, $input);
 
-                $this->configureDefaultDatabaseConnection($directory, $database, $name);
+                $this->configureDefaultDatabaseConnection($directory, $database, $name, $migrate);
+
+                if ($migrate) {
+                    $this->runCommands([
+                        $this->phpBinary().' artisan migrate',
+                    ], $input, $output, workingPath: $directory);
+                }
             }
 
             if ($input->getOption('git') || $input->getOption('github') !== false) {
@@ -203,7 +209,14 @@ class NewCommand extends Command
                 $output->writeln('');
             }
 
-            $output->writeln("  <bg=blue;fg=white> INFO </> Application ready in <options=bold>[{$name}]</>. Build something amazing.".PHP_EOL);
+            $output->writeln("  <bg=blue;fg=white> INFO </> Application ready in <options=bold>[{$name}]</>. You can start your local development using:".PHP_EOL);
+
+            $output->writeln('<fg=gray>➜</> <options=bold>cd '.$name.'</>');
+            $output->writeln('<fg=gray>➜</> <options=bold>php artisan serve</>');
+            $output->writeln('');
+
+            $output->writeln('  New to Laravel? Check out our <href=https://bootcamp.laravel.com>bootcamp</> and <href=https://laravel.com/docs/installation#next-steps>documentation</>. <options=bold>Build something amazing!</>');
+            $output->writeln('');
         }
 
         return $process->getExitCode();
@@ -231,46 +244,43 @@ class NewCommand extends Command
      * @param  string  $directory
      * @param  string  $database
      * @param  string  $name
+     * @param  bool  $migrate
      * @return void
      */
-    protected function configureDefaultDatabaseConnection(string $directory, string $database, string $name)
+    protected function configureDefaultDatabaseConnection(string $directory, string $database, string $name, bool $migrate)
     {
         // MariaDB configuration only exists as of Laravel 11...
-        if ($database === 'mariadb' && ! $this->hasMariaDBConfig($directory)) {
+        if ($database === 'mariadb' && ! $this->usingLaravel11OrNewer($directory)) {
             $database = 'mysql';
         }
 
-        $this->replaceInFile(
-            'DB_CONNECTION=mysql',
+        $this->pregReplaceInFile(
+            '/DB_CONNECTION=.*/',
             'DB_CONNECTION='.$database,
             $directory.'/.env'
         );
 
-        if (! in_array($database, ['sqlite'])) {
-            $this->replaceInFile(
-                'DB_CONNECTION=mysql',
-                'DB_CONNECTION='.$database,
-                $directory.'/.env.example'
-            );
-        }
-
-        $defaults = [
-            'DB_HOST=127.0.0.1',
-            'DB_PORT=3306',
-            'DB_DATABASE=laravel',
-            'DB_USERNAME=root',
-            'DB_PASSWORD=',
-        ];
+        $this->pregReplaceInFile(
+            '/DB_CONNECTION=.*/',
+            'DB_CONNECTION='.$database,
+            $directory.'/.env.example'
+        );
 
         if ($database === 'sqlite') {
-            $this->replaceInFile(
-                $defaults,
-                collect($defaults)->map(fn ($default) => "# {$default}")->all(),
-                $directory.'/.env'
-            );
+            $environment = file_get_contents($directory.'/.env');
+
+            // If database options aren't commented, comment them for SQLite...
+            if (! str_contains($environment, '# DB_HOST=127.0.0.1')) {
+                $this->commentDatabaseConfigurationForSqlite($directory);
+
+                return;
+            }
 
             return;
         }
+
+        // Any commented database configuration options should be uncommented when not on SQLite...
+        $this->uncommentDatabaseConfiguration($directory);
 
         $defaultPorts = [
             'pgsql' => '5432',
@@ -305,21 +315,75 @@ class NewCommand extends Command
     }
 
     /**
-     * Determine if the application has a MariaDB configuration entry.
+     * Determine if the application is using Laravel 11 or newer.
      *
      * @param  string  $directory
      * @return bool
      */
-    protected function hasMariaDBConfig(string $directory): bool
+    public function usingLaravel11OrNewer(string $directory): bool
     {
-        // Laravel 11+ has moved the configuration files into the framework...
-        if (! file_exists($directory.'/config/database.php')) {
-            return true;
-        }
+        $version = json_decode(file_get_contents($directory.'/composer.json'), true)['require']['laravel/framework'];
+        $version = str_replace('^', '', $version);
+        $version = explode('.', $version)[0];
 
-        return str_contains(
-            file_get_contents($directory.'/config/database.php'),
-            "'mariadb' =>"
+        return $version >= 11;
+    }
+
+    /**
+     * Comment the irrelevant database configuration entries for SQLite applications.
+     *
+     * @param  string  $directory
+     * @return void
+     */
+    protected function commentDatabaseConfigurationForSqlite(string $directory): void
+    {
+        $defaults = [
+            'DB_HOST=127.0.0.1',
+            'DB_PORT=3306',
+            'DB_DATABASE=laravel',
+            'DB_USERNAME=root',
+            'DB_PASSWORD=',
+        ];
+
+        $this->replaceInFile(
+            $defaults,
+            collect($defaults)->map(fn ($default) => "# {$default}")->all(),
+            $directory.'/.env'
+        );
+
+        $this->replaceInFile(
+            $defaults,
+            collect($defaults)->map(fn ($default) => "# {$default}")->all(),
+            $directory.'/.env.example'
+        );
+    }
+
+    /**
+     * Uncomment the relevant database configuration entries for non SQLite applications.
+     *
+     * @param  string  $directory
+     * @return void
+     */
+    protected function uncommentDatabaseConfiguration(string $directory)
+    {
+        $defaults = [
+            '# DB_HOST=127.0.0.1',
+            '# DB_PORT=3306',
+            '# DB_DATABASE=laravel',
+            '# DB_USERNAME=root',
+            '# DB_PASSWORD=',
+        ];
+
+        $this->replaceInFile(
+            $defaults,
+            collect($defaults)->map(fn ($default) => substr($default, 2))->all(),
+            $directory.'/.env'
+        );
+
+        $this->replaceInFile(
+            $defaults,
+            collect($defaults)->map(fn ($default) => substr($default, 2))->all(),
+            $directory.'/.env.example'
         );
     }
 
@@ -382,12 +446,14 @@ class NewCommand extends Command
     /**
      * Determine the default database connection.
      *
+     * @param  string  $directory
      * @param  \Symfony\Component\Console\Input\InputInterface  $input
      * @return string
      */
-    protected function promptForDatabaseOptions(InputInterface $input)
+    protected function promptForDatabaseOptions(string $directory, InputInterface $input)
     {
-        $database = 'mysql';
+        // Laravel 11.x appliations use SQLite as default...
+        $defaultDatabase = $this->usingLaravel11OrNewer($directory) ? 'sqlite' : 'mysql';
 
         if ($input->isInteractive()) {
             $database = select(
@@ -399,11 +465,15 @@ class NewCommand extends Command
                     'sqlite' => 'SQLite',
                     'sqlsrv' => 'SQL Server',
                 ],
-                default: $database
+                default: $defaultDatabase
             );
+
+            if ($this->usingLaravel11OrNewer($directory) && $database !== $defaultDatabase) {
+                $migrate = confirm(label: 'Default database updated. Would you like to run the default database migrations?', default: true);
+            }
         }
 
-        return $database;
+        return [$database ?? $defaultDatabase, $migrate ?? false];
     }
 
     /**
@@ -491,6 +561,11 @@ class NewCommand extends Command
         ))->each(fn ($option) => $input->setOption($option, true));
     }
 
+    /**
+     * Validate the starter kit stack input.
+     *
+     * @param  \Symfony\Components\Console\Input\InputInterface
+     */
     protected function validateStackOption(InputInterface $input)
     {
         if ($input->getOption('breeze')) {
@@ -801,6 +876,22 @@ class NewCommand extends Command
         file_put_contents(
             $file,
             str_replace($search, $replace, file_get_contents($file))
+        );
+    }
+
+    /**
+     * Replace the given string in the given file using regular expressions.
+     *
+     * @param  string|array  $search
+     * @param  string|array  $replace
+     * @param  string  $file
+     * @return void
+     */
+    protected function pregReplaceInFile(string $pattern, string $replace, string $file)
+    {
+        file_put_contents(
+            $file,
+            preg_replace($pattern, $replace, file_get_contents($file))
         );
     }
 }
