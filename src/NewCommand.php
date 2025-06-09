@@ -260,7 +260,7 @@ class NewCommand extends Command
             if ($name !== '.') {
                 $this->replaceInFile(
                     'APP_URL=http://localhost',
-                    'APP_URL='.$this->generateAppUrl($name),
+                    'APP_URL='.$this->generateAppUrl($name, $directory),
                     $directory.'/.env'
                 );
 
@@ -323,7 +323,7 @@ class NewCommand extends Command
             }
 
             if ($this->isParkedOnHerdOrValet($directory)) {
-                $url = $this->generateAppUrl($name);
+                $url = $this->generateAppUrl($name, $directory);
                 $output->writeln('<fg=gray>➜</> Open: <options=bold;href='.$url.'>'.$url.'</>');
             } else {
                 $output->writeln('<fg=gray>➜</> <options=bold>composer run dev</>');
@@ -557,7 +557,7 @@ class NewCommand extends Command
     /**
      * Validate the database driver input.
      *
-     * @param  \Symfony\Components\Console\Input\InputInterface
+     * @param  \Symfony\Components\Console\Input\InputInterface  $input
      */
     protected function validateDatabaseOption(InputInterface $input)
     {
@@ -740,10 +740,15 @@ class NewCommand extends Command
      * Generate a valid APP_URL for the given application name.
      *
      * @param  string  $name
+     * @param  string  $directory
      * @return string
      */
-    protected function generateAppUrl($name)
+    protected function generateAppUrl($name, $directory)
     {
+        if (! $this->isParkedOnHerdOrValet($directory)) {
+            return 'http://localhost:8000';
+        }
+
         $hostname = mb_strtolower($name).'.'.$this->getTld();
 
         return $this->canResolveHostname($hostname) ? 'http://'.$hostname : 'http://localhost';
@@ -751,6 +756,9 @@ class NewCommand extends Command
 
     /**
      * Get the starter kit repository, if any.
+     *
+     * @param  \Symfony\Component\Console\Input\InputInterface  $input
+     * @return string|null
      */
     protected function getStarterKit(InputInterface $input): ?string
     {
@@ -764,6 +772,9 @@ class NewCommand extends Command
 
     /**
      * Determine if a Laravel first-party starter kit has been chosen.
+     *
+     * @param  \Symfony\Component\Console\Input\InputInterface  $input
+     * @return bool
      */
     protected function usingLaravelStarterKit(InputInterface $input): bool
     {
@@ -774,7 +785,7 @@ class NewCommand extends Command
     /**
      * Determine if a starter kit is being used.
      *
-     * @param  \Symfony\Component\Console\Input\InputInterface
+     * @param  \Symfony\Component\Console\Input\InputInterface  $input
      * @return bool
      */
     protected function usingStarterKit(InputInterface $input)
