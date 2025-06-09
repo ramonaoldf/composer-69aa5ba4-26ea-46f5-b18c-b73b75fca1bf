@@ -25,7 +25,8 @@ class NewCommand extends Command
             ->setName('new')
             ->setDescription('Create a new Laravel application.')
             ->addArgument('name', InputArgument::OPTIONAL)
-            ->addOption('dev', null, InputOption::VALUE_NONE, 'Installs the latest "development" release');
+            ->addOption('dev', null, InputOption::VALUE_NONE, 'Installs the latest "development" release')
+            ->addOption('force', null, InputOption::VALUE_NONE, 'Forces install even if the directory already exists');
     }
 
     /**
@@ -41,9 +42,11 @@ class NewCommand extends Command
             throw new RuntimeException('The Zip PHP extension is not installed. Please install it and try again.');
         }
 
-        $this->verifyApplicationDoesntExist(
-            $directory = ($input->getArgument('name')) ? getcwd().'/'.$input->getArgument('name') : getcwd()
-        );
+        $directory = ($input->getArgument('name')) ? getcwd().'/'.$input->getArgument('name') : getcwd();
+
+        if (! $input->getOption('force')) {
+            $this->verifyApplicationDoesntExist($directory);
+        }
 
         $output->writeln('<info>Crafting application...</info>');
 
@@ -61,6 +64,12 @@ class NewCommand extends Command
             $composer.' run-script post-install-cmd',
             $composer.' run-script post-create-project-cmd',
         ];
+
+        if ($input->getOption('dev')) {
+            unset($commands[2]);
+
+            $commands[] = $composer.' run-script post-autoload-dump';
+        }
 
         if ($input->getOption('no-ansi')) {
             $commands = array_map(function ($value) {
