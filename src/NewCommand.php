@@ -59,7 +59,7 @@ class NewCommand extends Command
 | |     __ _ _ __ __ ___   _____| |
 | |    / _` | \'__/ _` \ \ / / _ \ |
 | |___| (_| | | | (_| |\ V /  __/ |
-|______\__,_|_|  \__,_| \_/ \___|_|'.PHP_EOL.PHP_EOL);
+|______\__,_|_|  \__,_| \_/ \___|_|</>'.PHP_EOL.PHP_EOL);
         }
 
         sleep(1);
@@ -72,6 +72,10 @@ class NewCommand extends Command
 
         if (! $input->getOption('force')) {
             $this->verifyApplicationDoesntExist($directory);
+        }
+
+        if ($input->getOption('force') && $directory === '.') {
+            throw new RuntimeException('Cannot use --force option when using current directory for installation!');
         }
 
         $composer = $this->findComposer();
