@@ -2,12 +2,16 @@
 
 namespace Laravel\Installer\Console;
 
+use Illuminate\Filesystem\Filesystem;
+use Illuminate\Support\Composer;
+use Illuminate\Support\ProcessUtils;
 use RuntimeException;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
+use Symfony\Component\Process\PhpExecutableFinder;
 use Symfony\Component\Process\Process;
 
 use function Laravel\Prompts\confirm;
@@ -18,6 +22,13 @@ use function Laravel\Prompts\text;
 class NewCommand extends Command
 {
     use Concerns\ConfiguresPrompts;
+
+    /**
+     * The Composer instance.
+     *
+     * @var \Illuminate\Support\Composer
+     */
+    protected $composer;
 
     /**
      * Configure the command options.
@@ -35,13 +46,15 @@ class NewCommand extends Command
             ->addOption('branch', null, InputOption::VALUE_REQUIRED, 'The branch that should be created for a new repository', $this->defaultBranch())
             ->addOption('github', null, InputOption::VALUE_OPTIONAL, 'Create a new repository on GitHub', false)
             ->addOption('organization', null, InputOption::VALUE_REQUIRED, 'The GitHub organization to create the new repository for')
+            ->addOption('stack', null, InputOption::VALUE_OPTIONAL, 'The Breeze / Jetstream stack that should be installed')
             ->addOption('breeze', null, InputOption::VALUE_NONE, 'Installs the Laravel Breeze scaffolding')
+            ->addOption('jet', null, InputOption::VALUE_NONE, 'Installs the Laravel Jetstream scaffolding')
             ->addOption('dark', null, InputOption::VALUE_NONE, 'Indicate whether Breeze or Jetstream should be scaffolded with dark mode support')
             ->addOption('typescript', null, InputOption::VALUE_NONE, 'Indicate whether Breeze should be scaffolded with TypeScript support (Experimental)')
             ->addOption('ssr', null, InputOption::VALUE_NONE, 'Indicate whether Breeze should be scaffolded with Inertia SSR support')
-            ->addOption('jet', null, InputOption::VALUE_NONE, 'Installs the Laravel Jetstream scaffolding')
-            ->addOption('stack', null, InputOption::VALUE_OPTIONAL, 'The Breeze / Jetstream stack that should be installed')
+            ->addOption('api', null, InputOption::VALUE_NONE, 'Indicates whether Jetstream should be scaffolded with API support')
             ->addOption('teams', null, InputOption::VALUE_NONE, 'Indicates whether Jetstream should be scaffolded with team support')
+            ->addOption('verification', null, InputOption::VALUE_NONE, 'Indicates whether Jetstream should be scaffolded with email verification support')
             ->addOption('pest', null, InputOption::VALUE_NONE, 'Installs the Pest testing framework')
             ->addOption('phpunit', null, InputOption::VALUE_NONE, 'Installs the PHPUnit testing framework')
             ->addOption('prompt-breeze', null, InputOption::VALUE_NONE, 'Issues a prompt to determine if Breeze should be installed (Deprecated)')
@@ -128,6 +141,8 @@ class NewCommand extends Command
 
         $directory = $name !== '.' ? getcwd().'/'.$name : '.';
 
+        $this->composer = new Composer(new Filesystem(), $directory);
+
         $version = $this->getVersion($input);
 
         if (! $input->getOption('force')) {
@@ -164,17 +179,9 @@ class NewCommand extends Command
                     $directory.'/.env'
                 );
 
-                $this->replaceInFile(
-                    'DB_DATABASE=laravel',
-                    'DB_DATABASE='.str_replace('-', '_', strtolower($name)),
-                    $directory.'/.env'
-                );
+                $database = $this->promptForDatabaseOptions($input);
 
-                $this->replaceInFile(
-                    'DB_DATABASE=laravel',
-                    'DB_DATABASE='.str_replace('-', '_', strtolower($name)),
-                    $directory.'/.env.example'
-                );
+                $this->configureDefaultDatabaseConnection($directory, $database, $name);
             }
 
             if ($input->getOption('git') || $input->getOption('github') !== false) {
@@ -217,6 +224,81 @@ class NewCommand extends Command
     }
 
     /**
+     * Configure the default database connection.
+     *
+     * @param  string  $directory
+     * @param  string  $database
+     * @param  string  $name
+     * @return void
+     */
+    protected function configureDefaultDatabaseConnection(string $directory, string $database, string $name)
+    {
+        $this->replaceInFile(
+            'DB_CONNECTION=mysql',
+            'DB_CONNECTION='.$database,
+            $directory.'/.env'
+        );
+
+        if (! in_array($database, ['sqlite'])) {
+            $this->replaceInFile(
+                'DB_CONNECTION=mysql',
+                'DB_CONNECTION='.$database,
+                $directory.'/.env.example'
+            );
+        }
+
+        $defaults = [
+            'DB_DATABASE=laravel',
+            'DB_HOST=127.0.0.1',
+            'DB_PORT=3306',
+            'DB_DATABASE=laravel',
+            'DB_USERNAME=root',
+            'DB_PASSWORD=',
+        ];
+
+        if ($database === 'sqlite') {
+            $this->replaceInFile(
+                $defaults,
+                collect($defaults)->map(fn ($default) => "# {$default}")->all(),
+                $directory.'/.env'
+            );
+
+            return;
+        }
+
+        $defaultPorts = [
+            'pgsql' => '5432',
+            'sqlsrv' => '1433',
+        ];
+
+        if (isset($defaultPorts[$database])) {
+            $this->replaceInFile(
+                'DB_PORT=3306',
+                'DB_PORT='.$defaultPorts[$database],
+                $directory.'/.env'
+            );
+
+            $this->replaceInFile(
+                'DB_PORT=3306',
+                'DB_PORT='.$defaultPorts[$database],
+                $directory.'/.env.example'
+            );
+        }
+
+        $this->replaceInFile(
+            'DB_DATABASE=laravel',
+            'DB_DATABASE='.str_replace('-', '_', strtolower($name)),
+            $directory.'/.env'
+        );
+
+        $this->replaceInFile(
+            'DB_DATABASE=laravel',
+            'DB_DATABASE='.str_replace('-', '_', strtolower($name)),
+            $directory.'/.env.example'
+        );
+    }
+
+    /**
      * Install Laravel Breeze into the application.
      *
      * @param  string  $directory
@@ -226,12 +308,10 @@ class NewCommand extends Command
      */
     protected function installBreeze(string $directory, InputInterface $input, OutputInterface $output)
     {
-        chdir($directory);
-
         $commands = array_filter([
             $this->findComposer().' require laravel/breeze',
             trim(sprintf(
-                '"'.PHP_BINARY.'" artisan breeze:install %s %s %s %s',
+                $this->phpBinary().' artisan breeze:install %s %s %s %s %s',
                 $input->getOption('stack'),
                 $input->getOption('typescript') ? '--typescript' : '',
                 $input->getOption('pest') ? '--pest' : '',
@@ -240,7 +320,7 @@ class NewCommand extends Command
             )),
         ]);
 
-        $this->runCommands($commands, $input, $output);
+        $this->runCommands($commands, $input, $output, workingPath: $directory);
 
         $this->commitChanges('Install Breeze', $directory, $input, $output);
     }
@@ -255,22 +335,48 @@ class NewCommand extends Command
      */
     protected function installJetstream(string $directory, InputInterface $input, OutputInterface $output)
     {
-        chdir($directory);
-
         $commands = array_filter([
             $this->findComposer().' require laravel/jetstream',
             trim(sprintf(
-                '"'.PHP_BINARY.'" artisan jetstream:install %s %s %s %s',
+                $this->phpBinary().' artisan jetstream:install %s %s %s %s %s %s',
                 $input->getOption('stack'),
-                $input->getOption('teams') ? '--teams' : '',
+                $input->getOption('api') ? '--api' : '',
                 $input->getOption('dark') ? '--dark' : '',
+                $input->getOption('teams') ? '--teams' : '',
                 $input->getOption('pest') ? '--pest' : '',
+                $input->getOption('verification') ? '--verification' : '',
             )),
         ]);
 
-        $this->runCommands($commands, $input, $output);
+        $this->runCommands($commands, $input, $output, workingPath: $directory);
 
         $this->commitChanges('Install Jetstream', $directory, $input, $output);
+    }
+
+    /**
+     * Determine the default database connection.
+     *
+     * @param  \Symfony\Component\Console\Input\InputInterface  $input
+     * @return string
+     */
+    protected function promptForDatabaseOptions(InputInterface $input)
+    {
+        $database = 'mysql';
+
+        if ($input->isInteractive()) {
+            $database = select(
+                label: 'Which database will your application use?',
+                options: [
+                    'mysql' => 'MySQL',
+                    'pgsql' => 'PostgreSQL',
+                    'sqlite' => 'SQLite',
+                    'sqlsrv' => 'SQL Server',
+                ],
+                default: $database
+            );
+        }
+
+        return $database;
     }
 
     /**
@@ -336,15 +442,19 @@ class NewCommand extends Command
         collect(multiselect(
             label: 'Would you like any optional features?',
             options: collect([
-                'teams' => 'Team support',
+                'api' => 'API support',
                 'dark' => 'Dark mode',
+                'verification' => 'Email verification',
+                'teams' => 'Team support',
             ])->when(
                 $input->getOption('stack') === 'inertia',
                 fn ($options) => $options->put('ssr', 'Inertia SSR')
             )->all(),
             default: array_filter([
-                $input->getOption('teams') ? 'teams' : null,
+                $input->getOption('api') ? 'api' : null,
                 $input->getOption('dark') ? 'dark' : null,
+                $input->getOption('teams') ? 'teams' : null,
+                $input->getOption('verification') ? 'verification' : null,
                 $input->getOption('stack') === 'inertia' && $input->getOption('ssr') ? 'ssr' : null,
             ]),
         ))->each(fn ($option) => $input->setOption($option, true));
@@ -378,29 +488,28 @@ class NewCommand extends Command
      */
     protected function installPest(string $directory, InputInterface $input, OutputInterface $output)
     {
-        chdir($directory);
+        if ($this->removeComposerPackages(['phpunit/phpunit'], $output, true)
+            && $this->requireComposerPackages(['pestphp/pest:^2.0', 'pestphp/pest-plugin-laravel:^2.0'], $output, true)) {
+            $commands = array_filter([
+                $this->phpBinary().' ./vendor/bin/pest --init',
+            ]);
 
-        $commands = array_filter([
-            $this->findComposer().' remove phpunit/phpunit --dev',
-            $this->findComposer().' require pestphp/pest:^2.0 pestphp/pest-plugin-laravel:^2.0 --dev',
-            '"'.PHP_BINARY.'" ./vendor/bin/pest --init',
-        ]);
+            $this->runCommands($commands, $input, $output, workingPath: $directory, env: [
+                'PEST_NO_SUPPORT' => 'true',
+            ]);
 
-        $this->runCommands($commands, $input, $output, [
-            'PEST_NO_SUPPORT' => 'true',
-        ]);
+            $this->replaceFile(
+                'pest/Feature.php',
+                $directory.'/tests/Feature/ExampleTest.php',
+            );
 
-        $this->replaceFile(
-            'pest/Feature.php',
-            $directory.'/tests/Feature/ExampleTest.php',
-        );
+            $this->replaceFile(
+                'pest/Unit.php',
+                $directory.'/tests/Unit/ExampleTest.php',
+            );
 
-        $this->replaceFile(
-            'pest/Unit.php',
-            $directory.'/tests/Unit/ExampleTest.php',
-        );
-
-        $this->commitChanges('Install Pest', $directory, $input, $output);
+            $this->commitChanges('Install Pest', $directory, $input, $output);
+        }
     }
 
     /**
@@ -413,8 +522,6 @@ class NewCommand extends Command
      */
     protected function createRepository(string $directory, InputInterface $input, OutputInterface $output)
     {
-        chdir($directory);
-
         $branch = $input->getOption('branch') ?: $this->defaultBranch();
 
         $commands = [
@@ -424,7 +531,7 @@ class NewCommand extends Command
             "git branch -M {$branch}",
         ];
 
-        $this->runCommands($commands, $input, $output);
+        $this->runCommands($commands, $input, $output, workingPath: $directory);
     }
 
     /**
@@ -442,14 +549,12 @@ class NewCommand extends Command
             return;
         }
 
-        chdir($directory);
-
         $commands = [
             'git add .',
             "git commit -q -m \"$message\"",
         ];
 
-        $this->runCommands($commands, $input, $output);
+        $this->runCommands($commands, $input, $output, workingPath: $directory);
     }
 
     /**
@@ -472,8 +577,6 @@ class NewCommand extends Command
             return;
         }
 
-        chdir($directory);
-
         $name = $input->getOption('organization') ? $input->getOption('organization')."/$name" : $name;
         $flags = $input->getOption('github') ?: '--private';
 
@@ -481,7 +584,7 @@ class NewCommand extends Command
             "gh repo create {$name} --source=. --push {$flags}",
         ];
 
-        $this->runCommands($commands, $input, $output, ['GIT_TERMINAL_PROMPT' => 0]);
+        $this->runCommands($commands, $input, $output, workingPath: $directory, env: ['GIT_TERMINAL_PROMPT' => 0]);
     }
 
     /**
@@ -543,13 +646,41 @@ class NewCommand extends Command
      */
     protected function findComposer()
     {
-        $composerPath = getcwd().'/composer.phar';
+        return implode(' ', $this->composer->findComposer());
+    }
 
-        if (file_exists($composerPath)) {
-            return '"'.PHP_BINARY.'" '.$composerPath;
-        }
+    /**
+     * Get the path to the appropriate PHP binary.
+     *
+     * @return string
+     */
+    protected function phpBinary()
+    {
+        $phpBinary = (new PhpExecutableFinder)->find(false);
 
-        return 'composer';
+        return $phpBinary !== false
+            ? ProcessUtils::escapeArgument($phpBinary)
+            : 'php';
+    }
+
+    /**
+     * Install the given Composer Packages into the application.
+     *
+     * @return bool
+     */
+    protected function requireComposerPackages(array $packages, OutputInterface $output, bool $asDev = false)
+    {
+        return $this->composer->requirePackages($packages, $asDev, $output);
+    }
+
+    /**
+     * Remove the given Composer Packages from the application.
+     *
+     * @return bool
+     */
+    protected function removeComposerPackages(array $packages, OutputInterface $output, bool $asDev = false)
+    {
+        return $this->composer->removePackages($packages, $asDev, $output);
     }
 
     /**
@@ -558,10 +689,11 @@ class NewCommand extends Command
      * @param  array  $commands
      * @param  \Symfony\Component\Console\Input\InputInterface  $input
      * @param  \Symfony\Component\Console\Output\OutputInterface  $output
+     * @param  string|null  $workingPath
      * @param  array  $env
      * @return \Symfony\Component\Process\Process
      */
-    protected function runCommands($commands, InputInterface $input, OutputInterface $output, array $env = [])
+    protected function runCommands($commands, InputInterface $input, OutputInterface $output, string $workingPath = null, array $env = [])
     {
         if (! $output->isDecorated()) {
             $commands = array_map(function ($value) {
@@ -591,7 +723,7 @@ class NewCommand extends Command
             }, $commands);
         }
 
-        $process = Process::fromShellCommandline(implode(' && ', $commands), null, $env, null, null);
+        $process = Process::fromShellCommandline(implode(' && ', $commands), $workingPath, $env, null, null);
 
         if ('\\' !== DIRECTORY_SEPARATOR && file_exists('/dev/tty') && is_readable('/dev/tty')) {
             try {
@@ -628,12 +760,12 @@ class NewCommand extends Command
     /**
      * Replace the given string in the given file.
      *
-     * @param  string  $search
-     * @param  string  $replace
+     * @param  string|array  $search
+     * @param  string|array  $replace
      * @param  string  $file
      * @return void
      */
-    protected function replaceInFile(string $search, string $replace, string $file)
+    protected function replaceInFile(string|array $search, string|array $replace, string $file)
     {
         file_put_contents(
             $file,
